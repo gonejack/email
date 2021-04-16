@@ -356,19 +356,14 @@ func writeMessage(buff io.Writer, msg []byte, multipart bool, mediaType string, 
 	if multipart {
 		header := textproto.MIMEHeader{
 			"Content-Type":              {mediaType + "; charset=UTF-8"},
-			"Content-Transfer-Encoding": {"quoted-printable"},
+			"Content-Transfer-Encoding": {"base64"},
 		}
 		if _, err := w.CreatePart(header); err != nil {
 			return err
 		}
 	}
 
-	qp := quotedprintable.NewWriter(buff)
-	// Write the text
-	if _, err := qp.Write(msg); err != nil {
-		return err
-	}
-	return qp.Close()
+	return base64Wrap(buff, msg)
 }
 
 func (e *Email) categorizeAttachments() (htmlRelated, others []*Attachment) {
@@ -416,10 +411,10 @@ func (e *Email) Bytes() ([]byte, error) {
 		headers.Set("Content-Type", "multipart/related;\r\n boundary="+w.Boundary())
 	case len(e.HTML) > 0:
 		headers.Set("Content-Type", "text/html; charset=UTF-8")
-		headers.Set("Content-Transfer-Encoding", "quoted-printable")
+		headers.Set("Content-Transfer-Encoding", "base64")
 	default:
 		headers.Set("Content-Type", "text/plain; charset=UTF-8")
-		headers.Set("Content-Transfer-Encoding", "quoted-printable")
+		headers.Set("Content-Transfer-Encoding", "base64")
 	}
 	headerToBytes(buff, headers)
 	_, err = io.WriteString(buff, "\r\n")
@@ -479,7 +474,10 @@ func (e *Email) Bytes() ([]byte, error) {
 						return nil, err
 					}
 					// Write the base64Wrapped content to the part
-					base64Wrap(ap, a.Content)
+					err = base64Wrap(ap, a.Content)
+					if err != nil {
+						return nil, err
+					}
 				}
 
 				if isMixed || isAlternative {
@@ -501,7 +499,10 @@ func (e *Email) Bytes() ([]byte, error) {
 			return nil, err
 		}
 		// Write the base64Wrapped content to the part
-		base64Wrap(ap, a.Content)
+		err = base64Wrap(ap, a.Content)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if isMixed || isAlternative || isRelated {
 		if err := w.Close(); err != nil {
@@ -737,7 +738,7 @@ func (at *Attachment) setDefaultHeaders() {
 
 // base64Wrap encodes the attachment content, and wraps it according to RFC 2045 standards (every 76 chars)
 // The output is then written to the specified io.Writer
-func base64Wrap(w io.Writer, b []byte) {
+func base64Wrap(w io.Writer, b []byte) (err error) {
 	// 57 raw bytes per 76-byte base64 line.
 	const maxRaw = 57
 	// Buffer for each line, including trailing CRLF.
@@ -746,7 +747,10 @@ func base64Wrap(w io.Writer, b []byte) {
 	// Process raw chunks until there's no longer enough to fill a line.
 	for len(b) >= maxRaw {
 		base64.StdEncoding.Encode(buffer, b[:maxRaw])
-		w.Write(buffer)
+		_, err = w.Write(buffer)
+		if err != nil {
+			return
+		}
 		b = b[maxRaw:]
 	}
 	// Handle the last chunk of bytes.
@@ -754,8 +758,13 @@ func base64Wrap(w io.Writer, b []byte) {
 		out := buffer[:base64.StdEncoding.EncodedLen(len(b))]
 		base64.StdEncoding.Encode(out, b)
 		out = append(out, "\r\n"...)
-		w.Write(out)
+		_, err = w.Write(out)
+		if err != nil {
+			return
+		}
 	}
+
+	return
 }
 
 // headerToBytes renders "header" to "buff". If there are multiple values for a
