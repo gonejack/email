@@ -24,6 +24,9 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"golang.org/x/text/encoding/htmlindex"
+	"golang.org/x/text/transform"
 )
 
 const (
@@ -36,6 +39,16 @@ var ErrMissingBoundary = errors.New("No boundary found for multipart entity")
 
 // ErrMissingContentType is returned when there is no "Content-Type" header for a MIME entity
 var ErrMissingContentType = errors.New("No Content-Type found for MIME entity")
+
+var wordDecoder = &mime.WordDecoder{
+	CharsetReader: func(charset string, input io.Reader) (io.Reader, error) {
+		enc, err := htmlindex.Get(charset)
+		if err != nil {
+			return nil, err
+		}
+		return transform.NewReader(input, enc.NewDecoder()), nil
+	},
+}
 
 // Email is the type used for email messages
 type Email struct {
@@ -90,7 +103,7 @@ func handleAddressList(v []string) []string {
 	for _, a := range v {
 		w := strings.Split(a, ",")
 		for _, addr := range w {
-			decodedAddr, err := (&mime.WordDecoder{}).DecodeHeader(strings.TrimSpace(addr))
+			decodedAddr, err := wordDecoder.DecodeHeader(strings.TrimSpace(addr))
 			if err == nil {
 				res = append(res, decodedAddr)
 			} else {
@@ -118,7 +131,7 @@ func NewEmailFromReader(r io.Reader) (*Email, error) {
 		switch h {
 		case "Subject":
 			e.Subject = v[0]
-			subj, err := (&mime.WordDecoder{}).DecodeHeader(e.Subject)
+			subj, err := wordDecoder.DecodeHeader(e.Subject)
 			if err == nil && len(subj) > 0 {
 				e.Subject = subj
 			}
@@ -137,7 +150,7 @@ func NewEmailFromReader(r io.Reader) (*Email, error) {
 			delete(hdrs, h)
 		case "From":
 			e.From = v[0]
-			fr, err := (&mime.WordDecoder{}).DecodeHeader(e.From)
+			fr, err := wordDecoder.DecodeHeader(e.From)
 			if err == nil && len(fr) > 0 {
 				e.From = fr
 			}
@@ -216,7 +229,7 @@ func parseMIMEParts(hs textproto.MIMEHeader, b io.Reader) ([]*part, error) {
 			if _, ok := p.Header["Content-Type"]; !ok {
 				p.Header.Set("Content-Type", defaultContentType)
 			}
-			subct, _, err := mime.ParseMediaType(p.Header.Get("Content-Type"))
+			subct, subps, err := mime.ParseMediaType(p.Header.Get("Content-Type"))
 			if err != nil {
 				return ps, err
 			}
@@ -227,17 +240,26 @@ func parseMIMEParts(hs textproto.MIMEHeader, b io.Reader) ([]*part, error) {
 				}
 				ps = append(ps, sps...)
 			} else {
-				var reader io.Reader
-				reader = p
+				var reader io.Reader = p
+
 				const cte = "Content-Transfer-Encoding"
 				if p.Header.Get(cte) == "base64" {
 					reader = base64.NewDecoder(base64.StdEncoding, reader)
+
+					if strings.HasPrefix(subct, "text") && subps["charset"] != "" {
+						transReader, err := wordDecoder.CharsetReader(subps["charset"], reader)
+						if err == nil {
+							reader = transReader
+						}
+					}
 				}
+
 				// Otherwise, just append the part to the list
 				// Copy the part data into the buffer
 				if _, err := io.Copy(&buf, reader); err != nil {
 					return ps, err
 				}
+
 				ps = append(ps, &part{body: buf.Bytes(), header: p.Header})
 			}
 		}
