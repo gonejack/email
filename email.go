@@ -243,14 +243,17 @@ func parseMIMEParts(hs textproto.MIMEHeader, b io.Reader) ([]*part, error) {
 				var reader io.Reader = p
 
 				const cte = "Content-Transfer-Encoding"
-				if p.Header.Get(cte) == "base64" {
+				switch p.Header.Get(cte) {
+				case "base64":
 					reader = base64.NewDecoder(base64.StdEncoding, reader)
+				case "quoted-printable":
+					reader = quotedprintable.NewReader(reader)
+				}
 
-					if strings.HasPrefix(subct, "text") && subps["charset"] != "" {
-						transReader, err := wordDecoder.CharsetReader(subps["charset"], reader)
-						if err == nil {
-							reader = transReader
-						}
+				if strings.HasPrefix(subct, "text") && subps["charset"] != "" {
+					transReader, err := wordDecoder.CharsetReader(subps["charset"], reader)
+					if err == nil {
+						reader = transReader
 					}
 				}
 
