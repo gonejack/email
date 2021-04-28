@@ -274,6 +274,14 @@ func parseMIMEParts(hs textproto.MIMEHeader, b io.Reader) ([]*part, error) {
 		case "base64":
 			b = base64.NewDecoder(base64.StdEncoding, b)
 		}
+
+		if strings.HasPrefix(ct, "text") && params["charset"] != "" {
+			transReader, err := wordDecoder.CharsetReader(params["charset"], b)
+			if err == nil {
+				b = transReader
+			}
+		}
+
 		var buf bytes.Buffer
 		if _, err := io.Copy(&buf, b); err != nil {
 			return ps, err
