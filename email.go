@@ -312,6 +312,9 @@ func (e *Email) AttachWithHeaders(r io.Reader, filename string, c string, header
 		Header:      headers,
 		Content:     buffer.Bytes(),
 	}
+	if cd, _, _ := mime.ParseMediaType(headers.Get("Content-Disposition")); cd == "inline" {
+		at.HTMLRelated = true
+	}
 	e.Attachments = append(e.Attachments, at)
 	return at, nil
 }
