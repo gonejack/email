@@ -58,9 +58,10 @@ type Email struct {
 	Bcc         []string
 	Cc          []string
 	Subject     string
-	Text        []byte // Plaintext message (optional)
-	HTML        []byte // Html message (optional)
-	Sender      string // override From as SMTP envelope sender (optional)
+	Text        []byte               // Plaintext message (optional)
+	HTML        []byte               // Html message (optional)
+	HTMLHeaders textproto.MIMEHeader // available for parsed multipart/related mail
+	Sender      string               // override From as SMTP envelope sender (optional)
 	Headers     textproto.MIMEHeader
 	Attachments []*Attachment
 	ReadReceipt []string
@@ -192,6 +193,7 @@ func NewEmailFromReader(r io.Reader) (*Email, error) {
 			e.Text = p.body
 		case ct == "text/html":
 			e.HTML = p.body
+			e.HTMLHeaders = p.header
 		}
 	}
 	return e, nil
