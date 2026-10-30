@@ -439,6 +439,10 @@ func (e *Email) Bytes() ([]byte, error) {
 	var w *multipart.Writer
 	if isMixed || isAlternative || isRelated {
 		w = multipart.NewWriter(buff)
+		// RFC 2045, section 6.4: Content-Transfer-Encoding is not allowed on
+		// multipart entities. It may have been inherited from a parsed source
+		// message, so drop it before writing the envelope headers.
+		headers.Del("Content-Transfer-Encoding")
 	}
 	switch {
 	case isMixed:

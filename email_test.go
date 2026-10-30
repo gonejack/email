@@ -1,13 +1,10 @@
 package email
 
 import (
-	"fmt"
-	"strings"
-	"testing"
-
 	"bufio"
 	"bytes"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"mime"
@@ -16,6 +13,8 @@ import (
 	"net/mail"
 	"net/smtp"
 	"net/textproto"
+	"strings"
+	"testing"
 )
 
 func prepareEmail() *Email {
@@ -199,6 +198,78 @@ func TestEmailWithHTMLAttachmentsHTMLOnly(t *testing.T) {
 	}
 	if !imageFound {
 		t.Error("Did not find image part.")
+	}
+}
+
+func TestMultipartDropsContentTransferEncoding(t *testing.T) {
+	tests := []struct {
+		name        string
+		build       func(*Email)
+		contentType string
+	}{
+		{
+			name: "mixed",
+			build: func(e *Email) {
+				e.Text = []byte("Text Body")
+				if _, err := e.Attach(bytes.NewBufferString("Rad attachment"), "rad.txt", "text/plain; charset=utf-8"); err != nil {
+					t.Fatal("Could not add an attachment to the message: ", err)
+				}
+			},
+			contentType: "multipart/mixed",
+		},
+		{
+			name: "alternative",
+			build: func(e *Email) {
+				e.Text = []byte("Text Body")
+				e.HTML = []byte("<p>Html Body</p>")
+			},
+			contentType: "multipart/alternative",
+		},
+		{
+			name: "related",
+			build: func(e *Email) {
+				e.HTML = []byte("<p>Html Body</p>")
+				attachment, err := e.Attach(bytes.NewBufferString("Rad attachment"), "rad.txt", "image/png")
+				if err != nil {
+					t.Fatal("Could not add an attachment to the message: ", err)
+				}
+				attachment.HTMLRelated = true
+			},
+			contentType: "multipart/related",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := prepareEmail()
+			// Content-Transfer-Encoding is not allowed on multipart entities
+			// (RFC 2045, section 6.4), but it can be inherited from a parsed
+			// source message.
+			e.Headers.Set("Content-Transfer-Encoding", "base64")
+			test.build(e)
+
+			raw, err := e.Bytes()
+			if err != nil {
+				t.Fatal("Could not serialize e-mail: ", err)
+			}
+
+			tp := textproto.NewReader(bufio.NewReader(bytes.NewReader(raw)))
+			hdrs, err := tp.ReadMIMEHeader()
+			if err != nil {
+				t.Fatal("Could not parse the headers: ", err)
+			}
+
+			ct, _, err := mime.ParseMediaType(hdrs.Get("Content-Type"))
+			if err != nil {
+				t.Fatal("Could not parse Content-Type: ", err)
+			}
+			if ct != test.contentType {
+				t.Fatalf("Content-Type expected %q, got %q", test.contentType, ct)
+			}
+			if got := hdrs.Get("Content-Transfer-Encoding"); got != "" {
+				t.Errorf("multipart message must not have a Content-Transfer-Encoding header, got %q", got)
+			}
+		})
 	}
 }
 
